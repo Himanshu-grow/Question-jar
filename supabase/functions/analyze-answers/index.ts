@@ -1,0 +1,12 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type'};
+Deno.serve(async(req)=>{if(req.method==='OPTIONS')return new Response('ok',{headers:cors});try{
+ const {code,token}=await req.json();if(typeof code!=='string'||typeof token!=='string')throw Error('Missing room credentials');
+ const db=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+ const {data:state,error}=await db.rpc('get_room_state',{p_code:code,p_token:token});if(error||state?.status!=='revealed')throw Error('Room is not ready to analyze');
+ const {data:r}=await db.from('game_rooms').select('answer1,answer2,question,analysis').eq('code',code).single();if(r?.analysis)return Response.json(r.analysis,{headers:cors});
+ const key=Deno.env.get('OPENAI_API_KEY');if(!key)throw Error('Set OPENAI_API_KEY for semantic answer analysis');
+ const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Authorization':`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({model:Deno.env.get('OPENAI_MODEL')||'gpt-4o-mini',temperature:.3,response_format:{type:'json_object'},messages:[{role:'system',content:'Compare two romantic game answers playfully, never as a scientifically valid compatibility test. Score meaning similarity (40%), emotional similarity (25%), preference similarity (20%), specific detail overlap (15%). Similar meaning matters more than identical wording. Return JSON only: score integer 0-100, label one of Beautifully in Sync, Great Connection, Some Common Ground, Different Perspectives, Opposites Attract, common, difference, observation, follow_up. Be warm, specific and nonjudgmental.'},{role:'user',content:JSON.stringify({question:state.question,answer_one:r.answer1,answer_two:r.answer2})}]})});
+ const body=await response.json();if(!response.ok)throw Error(body.error?.message||'Analysis failed');const result=JSON.parse(body.choices[0].message.content);const score=Math.max(0,Math.min(100,Number(result.score)||0));result.score=score;result.label=score>=90?'Beautifully in Sync':score>=75?'Great Connection':score>=50?'Some Common Ground':score>=25?'Different Perspectives':'Opposites Attract';
+ await db.from('game_rooms').update({analysis:result}).eq('code',code);return Response.json(result,{headers:cors});
+}catch(e){return Response.json({error:String(e.message||e)},{status:400,headers:cors})}});
