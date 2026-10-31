@@ -8,7 +8,7 @@ Romantic, responsive two player question game built with React, Vite and Supabas
 2. Copy `.env.example` to `.env`, then set the Supabase project URL and anon key.
 3. Apply the migrations in `supabase/migrations/` with the Supabase CLI (`supabase db push`) or SQL Editor. Existing projects must apply the new `202610310002_validate_analysis.sql` migration.
 4. Redeploy the semantic scoring function: `supabase functions deploy analyze-answers`.
-5. Set `GEMINI_API_KEY` as an Edge Function secret (`supabase secrets set GEMINI_API_KEY=...`). Optionally set `GEMINI_MODEL`; it defaults to `gemini-2.5-flash-lite`.
+5. Set `GEMINI_API_KEY` as an Edge Function secret (`supabase secrets set GEMINI_API_KEY=...`). Optionally set `GEMINI_MODEL`; it defaults to `gemini-3.5-flash-lite`.
 6. Run `npm run dev`.
 
 Enable Realtime for `room_events` (the migration adds it to `supabase_realtime`). Configure HTTPS and a static-site rewrite so `/room/<code>` falls back to `index.html`.
