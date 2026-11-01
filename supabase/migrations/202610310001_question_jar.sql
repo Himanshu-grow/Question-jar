@@ -13,7 +13,15 @@ alter table public.game_rooms enable row level security;
 -- Only a stripped mirror is visible to Realtime. Answer fields remain RPC-only.
 create table if not exists public.room_events(code text primary key,player1_name text not null,player2_name text,category text not null,question text,round_no integer not null,status text not null,deadline timestamptz,submitted1 boolean not null,submitted2 boolean not null,analysis jsonb,vote1 boolean not null,vote2 boolean not null);
 alter table public.room_events enable row level security;
-create policy "room events readable" on public.room_events for select to anon,authenticated using(true);
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname='public' and tablename='room_events' and policyname='room events readable'
+  ) then
+    create policy "room events readable" on public.room_events for select to anon,authenticated using(true);
+  end if;
+end $$;
 grant select on public.room_events to anon,authenticated;
 revoke all on public.game_rooms from anon,authenticated;
 
@@ -42,7 +50,17 @@ create or replace function public.vote_next(p_code text,p_token text,p_category 
 declare r game_rooms; s int;
 begin select * into r from game_rooms where code=upper(p_code) for update; perform room_state(p_code,p_token); s:=case when digest(p_token,'sha256')::text=r.player1_token_hash then 1 else 2 end; if r.status<>'revealed' then raise exception 'Finish this reveal first'; end if; if s=1 then update game_rooms set vote1=true where id=r.id; else update game_rooms set vote2=true where id=r.id; end if; select * into r from game_rooms where id=r.id; if r.vote1 and r.vote2 then update game_rooms set category=p_category,question=p_question,round_no=round_no+1,status='playing',deadline=now()+interval '90 seconds',answer1=null,answer2=null,submitted1=false,submitted2=false,analysis=null,vote1=false,vote2=false,used_questions=used_questions||p_question where id=r.id; end if; end $$;
 create or replace function public.mirror_room_event() returns trigger language plpgsql security definer set search_path=public as $$ begin insert into room_events(code,player1_name,player2_name,category,question,round_no,status,deadline,submitted1,submitted2,analysis,vote1,vote2) values(new.code,new.player1_name,new.player2_name,new.category,new.question,new.round_no,new.status,new.deadline,new.submitted1,new.submitted2,new.analysis,new.vote1,new.vote2) on conflict(code) do update set player1_name=excluded.player1_name,player2_name=excluded.player2_name,category=excluded.category,question=excluded.question,round_no=excluded.round_no,status=excluded.status,deadline=excluded.deadline,submitted1=excluded.submitted1,submitted2=excluded.submitted2,analysis=excluded.analysis,vote1=excluded.vote1,vote2=excluded.vote2; return new; end $$;
-create trigger game_room_event_mirror after insert or update on public.game_rooms for each row execute function public.mirror_room_event();
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger
+    where tgrelid='public.game_rooms'::regclass
+      and tgname='game_room_event_mirror'
+      and not tgisinternal
+  ) then
+    create trigger game_room_event_mirror after insert or update on public.game_rooms for each row execute function public.mirror_room_event();
+  end if;
+end $$;
 -- All state mutations pass through token-checked functions. No direct table writes are granted.
 revoke all on function public.room_state(text,text) from public;
 revoke all on function public.create_room(text,text) from public;
@@ -54,4 +72,12 @@ revoke all on function public.vote_next(text,text,text,text) from public;
 grant execute on function public.create_room(text,text),public.join_room(text,text),public.get_room_state(text,text),public.start_round(text,text,text,text),public.submit_answer(text,text,text),public.vote_next(text,text,text,text) to anon,authenticated;
 
 -- Realtime publishes room status changes; clients fetch their authorized view through get_room_state.
-alter publication supabase_realtime add table public.room_events;
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname='supabase_realtime' and schemaname='public' and tablename='room_events'
+  ) then
+    alter publication supabase_realtime add table public.room_events;
+  end if;
+end $$;
